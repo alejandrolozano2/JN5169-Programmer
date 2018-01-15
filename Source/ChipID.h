@@ -88,6 +88,7 @@ extern "C" {
 #define CHIP_ID_COG04                   0x00007686  /* Cougar COG04                                 */
 #define CHIP_ID_JN5168                  0x00008686  /* Cougar COG05                                 */
 #define CHIP_ID_JN5168_COG07            0x10008686  /* Cougar COG07                                 */
+#define CHIP_ID_JN5169                  0x6000B686  /* Cougar COG05                                 */
 
 
 /* Macro to get just the Part ID from the chip ID */

@@ -51,7 +51,9 @@
 /****************************************************************************/
 
 #include <stdio.h>
+#ifndef __APPLE__
 #include <endian.h>
+#endif
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <stdint.h>
@@ -101,6 +103,8 @@
 /* Location of device configuration in memory map */
 #define JN516X_INDEX_SECTOR_DEVICE_CONFIG_ADDR  0x01001500
 
+/* Location of Customer Settings in memory map */
+#define JN516X_INDEX_CUSTOMER_SETTINGS_ADDR     0x01001510
 
 /****************************************************************************/
 /***        Type Definitions                                              ***/
@@ -267,6 +271,8 @@ teStatus BL_eGetChipId(int iUartFd, tsChipDetails *psChipDetails)
         return E_STATUS_NULL_PARAMETER;
     }
 
+	psChipDetails->u32CustomerSettings = 0xFFFFFFFF;
+
     /* Send chip id request */
     if(iBL_ReadChipId(iUartFd, &psChipDetails->u32ChipId) < 0)
     {
@@ -326,8 +332,69 @@ teStatus BL_eGetChipId(int iUartFd, tsChipDetails *psChipDetails)
             DBG_vPrintf(TRACE_BOOTLOADER, "JN516x Bootloader version 0x%08x\n", psChipDetails->u32BootloaderVersion);
             DBG_vPrintf(TRACE_BOOTLOADER, "JN516x Supported firmware 0x%08x\n", psChipDetails->u32SupportedFirmware);
         }
-    }
-    else
+    }else if (CHIP_ID_PART(psChipDetails->u32ChipId) == CHIP_ID_PART(CHIP_ID_JN5169)){
+
+		psChipDetails->u32BootloaderVersion = 0;
+		int bFlashLoad = 1;
+		int bFlashEnc  = 1;
+		int iCRPLevel  = 3;
+		int iVBOThr    = 7;
+		int bCPUJTAG   = 1;
+
+        if (iBL_ReadRAM(iUartFd, JN516X_INDEX_CUSTOMER_SETTINGS_ADDR, 4, au8Buffer) < 0)
+        {
+            DBG_vPrintf(TRACE_BOOTLOADER, "Error Reading Customer Settings\n");
+            return E_STATUS_ERROR;
+        }
+        else
+        {
+			bFlashLoad = (au8Buffer[3] >> 7) & 0x01;
+			bFlashEnc  = (au8Buffer[3] >> 6) & 0x01;
+			iCRPLevel  = (au8Buffer[3] >> 4) & 0x03;
+			iVBOThr    = (au8Buffer[3] >> 1) & 0x07;
+			bCPUJTAG   = (au8Buffer[3] >> 0) & 0x01;
+
+            psChipDetails->u32CustomerSettings  = au8Buffer[0] << 24;
+            psChipDetails->u32CustomerSettings |= au8Buffer[1] << 16;
+            psChipDetails->u32CustomerSettings |= au8Buffer[2] << 8;
+            psChipDetails->u32CustomerSettings |= au8Buffer[3] << 0;
+
+			DBG_vPrintf(TRACE_BOOTLOADER, "JN516x FLASH_LOAD %d (If 0 then loading firmware from external Flash is disabled)\n", bFlashLoad);
+			DBG_vPrintf(TRACE_BOOTLOADER, "JN516x FLASH_ENC  %d (If 0 then the contents of external Flash are decrypted as they are loaded into internal Flash memory)\n", bFlashEnc);
+			DBG_vPrintf(TRACE_BOOTLOADER, "JN516x CRP_LEVEL  %d\n", iCRPLevel);
+			DBG_vPrintf(TRACE_BOOTLOADER, "\t0 = CRP level 2 (no programming allowed via UART)\n");
+			DBG_vPrintf(TRACE_BOOTLOADER, "\t1 = CRP level 1 (Flash read protection)\n");
+			DBG_vPrintf(TRACE_BOOTLOADER, "\t2 = CRP level 2 (no programming allowed via UART)\n");
+			DBG_vPrintf(TRACE_BOOTLOADER, "\t3 = CRP level 0 (no protection))\n");
+			DBG_vPrintf(TRACE_BOOTLOADER, "JN516x VBO_THR    %d\n", iVBOThr);
+			DBG_vPrintf(TRACE_BOOTLOADER, "JN516x CPU_JTAG   %d (If 0 then CPU JTAG access is disabled)\n", bCPUJTAG);
+		}
+
+        if (iBL_ReadRAM(iUartFd, JN516X_INDEX_SECTOR_DEVICE_CONFIG_ADDR, 4, au8Buffer) < 0)
+        {
+            DBG_vPrintf(TRACE_BOOTLOADER, "Error Reading config from flash index sector\n");
+            return E_STATUS_ERROR;
+        }
+        else
+        {
+            psChipDetails->u32RamSize      = (au8Buffer[3] & 0x07) >> 0;
+            psChipDetails->u32FlashSize    = (au8Buffer[3] & 0x30) >> 4;
+
+            psChipDetails->u32RamSize      =  32/8-1;								//!!!
+            psChipDetails->u32FlashSize    = 512/32-1;								//!!!
+
+            psChipDetails->u32SupportedFirmware = (
+                (psChipDetails->u32FlashSize << 16) |
+                (psChipDetails->u32RamSize   << 24) |
+                (0x08));
+			psChipDetails->u32SupportedFirmware = 0x0f03000b;					//!!!
+            
+            DBG_vPrintf(TRACE_BOOTLOADER, "JN516x RAM size %dk\n", (psChipDetails->u32RamSize * 8) + 8);
+            DBG_vPrintf(TRACE_BOOTLOADER, "JN516x Flash size %dk\n", (psChipDetails->u32FlashSize * 32) + 32);
+            DBG_vPrintf(TRACE_BOOTLOADER, "JN516x Bootloader version 0x%08x\n", psChipDetails->u32BootloaderVersion);
+            DBG_vPrintf(TRACE_BOOTLOADER, "JN516x Supported firmware 0x%08x\n", psChipDetails->u32SupportedFirmware);
+        }
+    }else
     {
         if (iBL_ReadRAM(iUartFd, JN514X_ROM_ID_ADDR, 4, au8Buffer) < 0)
         {
@@ -380,6 +447,7 @@ teStatus BL_eGetMacAddress(int iUartFd, tsChipDetails *psChipDetails)
             break;
 
         case CHIP_ID_PART(CHIP_ID_JN5168):
+        case CHIP_ID_PART(CHIP_ID_JN5169):
             /* First we read the customer specific MAC address, and if its not all F's, we use that */
             iRetval = iBL_ReadRAM(iUartFd, JN516X_CUSTOMER_MAC_ADDRESS_LOCATION, 8, psChipDetails->au8MacAddress);
 
@@ -476,6 +544,7 @@ teStatus BL_eReprogram(int iUartFd, tsChipDetails *psChipDetails, tsFW_Info *psF
             break;
 
         case CHIP_ID_PART(CHIP_ID_JN5168):
+        case CHIP_ID_PART(CHIP_ID_JN5169):
             break;
 
         default:
@@ -537,52 +606,56 @@ teStatus BL_eReprogram(int iUartFd, tsChipDetails *psChipDetails, tsFW_Info *psF
         return E_STATUS_ERROR;
     }
 
+	if((psChipDetails->u32CustomerSettings&0x30) != 0x30){
+		DBG_vPrintf(TRACE_BOOTLOADER, "Cannot check for Flash blankess, because of CRP\n");
+	}else{
     /* Ensure that flash is erased */
-    DBG_vPrintf(TRACE_BOOTLOADER, "Checking flash is blank...\n");
-    memset(au8Buffer2, 0xFF, 64);
+		DBG_vPrintf(TRACE_BOOTLOADER, "Checking flash is blank...\n");
+		memset(au8Buffer2, 0xFF, 64);
 
-    if (iBL_ReadFlash(iUartFd, 0, 64, au8Buffer1) == -1)
-    {
-        DBG_vPrintf(TRACE_BOOTLOADER, "Error reading Flash at address 0x%08x\n", 0);
-        return E_STATUS_ERROR;
-    }
-    else
-    {
-        if (memcmp(au8Buffer1, au8Buffer2, 64))
-        {
-            printf("Failed to erase Flash: not blank!\n");
+		if (iBL_ReadFlash(iUartFd, 0, 64, au8Buffer1) == -1)
+		{
+		    DBG_vPrintf(TRACE_BOOTLOADER, "Error reading Flash at address 0x%08x\n", 0);
+	        return E_STATUS_ERROR;
+		}
+		else
+		{
+		    if (memcmp(au8Buffer1, au8Buffer2, 64))
+		    {
+		        printf("Failed to erase Flash: not blank!\n");
 #if 0
-            {
-                /* Dump the contents in hex */
-                DBG_vPrintf(TRACE_BOOTLOADER, "Dumping %d bytes\n", 64);
-                for(n = 0; n < 64; n++)
-                {
+		        {
+		            /* Dump the contents in hex */
+		            DBG_vPrintf(TRACE_BOOTLOADER, "Dumping %d bytes\n", 64);
+		            for(n = 0; n < 64; n++)
+		            {
 
-                    if((n % 16) == 0)
-                    {
-                        DBG_vPrintf(TRACE_BOOTLOADER, "\n%08x: ", n);
-                    }
+		                if((n % 16) == 0)
+		                {
+		                    DBG_vPrintf(TRACE_BOOTLOADER, "\n%08x: ", n);
+		                }
 
-                    DBG_vPrintf(TRACE_BOOTLOADER, " %02x", au8Buffer1[n]);
+		                DBG_vPrintf(TRACE_BOOTLOADER, " %02x", au8Buffer1[n]);
 
-                }
-                DBG_vPrintf(TRACE_BOOTLOADER, "\n");
+		            }
+		            DBG_vPrintf(TRACE_BOOTLOADER, "\n");
 
-            }
+		        }
 #endif
 
-            return E_STATUS_ERROR;
-        }
-        else
-        {
-            DBG_vPrintf(TRACE_BOOTLOADER, "Flash erase success\n");
-            
-            if (iVerbosity > 0)
-            {
-                printf("%c[AErasing:   100%%\n", 0x1B);
-            }
-        }
-    }
+		        return E_STATUS_ERROR;
+		    }
+		    else
+		    {
+		        DBG_vPrintf(TRACE_BOOTLOADER, "Flash erase success\n");
+		        
+		        if (iVerbosity > 0)
+		        {
+		            printf("%c[AErasing:   100%%\n", 0x1B);
+		        }
+		    }
+		}
+	}
 
     if (iVerbosity > 0)
     {
@@ -614,43 +687,48 @@ teStatus BL_eReprogram(int iUartFd, tsChipDetails *psChipDetails, tsFW_Info *psF
         }
     }
 
-    if (iVerbosity > 0)
-    {
-        printf("Verifying Program in Flash\n\n");
-    }
+	if((psChipDetails->u32CustomerSettings&0x30) != 0x30){
+		DBG_vPrintf(TRACE_BOOTLOADER, "Cannot verify Flash, because of CRP\n");
+	}else{
 
-    for(n = 0; n < psFWImage->u32ImageLength;)
-    {
-        if((psFWImage->u32ImageLength - n) > 128)
-        {
-            u8ChunkSize = 128;
-        }
-        else
-        {
-            u8ChunkSize = psFWImage->u32ImageLength - n;
-        }
+		if (iVerbosity > 0)
+		{
+		    printf("Verifying Program in Flash\n\n");
+		}
 
-        if (iBL_ReadFlash(iUartFd, n, u8ChunkSize, au8Buffer1) == -1)
-        {
-            printf("Error reading at address 0x%08x\n", n);
-            return E_STATUS_ERROR;
-        }
-        else
-        {
-            if (memcmp(psFWImage->pu8ImageData + n, au8Buffer1, u8ChunkSize))
-            {
-                printf("Verify failed at address 0x%08x!\n", n);
-                return E_STATUS_ERROR;
-            }
-        }
+		for(n = 0; n < psFWImage->u32ImageLength;)
+		{
+		    if((psFWImage->u32ImageLength - n) > 128)
+		    {
+		        u8ChunkSize = 128;
+		    }
+		    else
+		    {
+		        u8ChunkSize = psFWImage->u32ImageLength - n;
+		    }
 
-        n += u8ChunkSize;
+		    if (iBL_ReadFlash(iUartFd, n, u8ChunkSize, au8Buffer1) == -1)
+		    {
+		        printf("Error reading at address 0x%08x\n", n);
+	            return E_STATUS_ERROR;
+		    }
+		    else
+		    {
+		        if (memcmp(psFWImage->pu8ImageData + n, au8Buffer1, u8ChunkSize))
+		        {
+		            printf("Verify failed at address 0x%08x!\n", n);
+		            return E_STATUS_ERROR;
+		        }
+		    }
 
-        if (iVerbosity > 0)
-        {
-            printf("%c[AVerifying: %3d%%\n", 0x1B, (n * 100) / psFWImage->u32ImageLength);
-        }
-    }
+		    n += u8ChunkSize;
+
+		    if (iVerbosity > 0)
+		    {
+		        printf("%c[AVerifying: %3d%%\n", 0x1B, (n * 100) / psFWImage->u32ImageLength);
+		    }
+		}
+	}
 
     return E_STATUS_OK;
 }
@@ -664,9 +742,11 @@ teStatus BL_eSetBaudrate(int iUartFd, uint32_t u32Baudrate)
     uint8_t au8Buffer[6];
     uint32_t u32Divisor;
     
-    // Divide 1MHz clock bu baudrate to get the divisor
-    u32Divisor = 1000000 / u32Baudrate;
-    
+    // Divide 1MHz clock bu baudrate to get the divisor, round to closest
+	u32Divisor = (1000000+u32Baudrate/2) / u32Baudrate;
+	
+	DBG_vPrintf(TRACE_BOOTLOADER, "%s: Actual baud rate set %d\n", __FUNCTION__, 1000000/u32Divisor);
+
     au8Buffer[0] = (uint8_t)u32Divisor;
     au8Buffer[1] = 0;
     au8Buffer[2] = 0;
@@ -847,7 +927,7 @@ static int iBL_ReadChipId(int iUartFd, uint32_t *pu32ChipId)
     teBL_Response eResponse = 0;
     teBL_MessageType eRxType = 0;
     uint8_t u8RxDataLen = 0;
-    uint8_t au8Buffer[6];
+    uint8_t au8Buffer[256];						// Was 6 bytes, but chip ID response is 11 bytes!!! As the length is given in a byte, this should always work.
 
 	if(pu32ChipId == NULL)
 	{
@@ -1074,7 +1154,7 @@ static int iBL_ReadRAM(int iUartFd, uint32_t u32Address, uint8_t u8Length, uint8
 	eResponse = eBL_Request(iUartFd, BL_TIMEOUT_1S, E_BL_MSG_TYPE_RAM_READ_REQUEST, 6, au8CmdBuffer, 0, NULL, &eRxType, &u8RxDataLen, pu8Buffer);
 	if(eResponse != E_BL_RESPONSE_OK || eRxType != E_BL_MSG_TYPE_RAM_READ_RESPONSE)
 	{
-		DBG_vPrintf(TRACE_BOOTLOADER, "%s: Response %02x\n", __FUNCTION__, eResponse);
+		DBG_vPrintf(TRACE_BOOTLOADER, "%s: @%08x Response %02x\n", __FUNCTION__, u32Address, eResponse);
 		return -1;
 	}
 
@@ -1382,7 +1462,7 @@ static teBL_Response eBL_ReadMessage(int iUartFd, int iTimeoutMicroseconds, teBL
 		iTotalBytesRead += iBytesRead;
 		iAttempts++;
 
-	} while((iTotalBytesRead < u8Length) && (iBytesRead > 0 || iAttempts < 10));
+	} while((iTotalBytesRead < u8Length) && (iBytesRead > 0 || iAttempts < 256));						// Right now we are receiving the chars one by one.
 
 	if(iTotalBytesRead != u8Length)
 	{

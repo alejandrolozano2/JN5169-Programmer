@@ -256,7 +256,8 @@ int main(int argc, char *argv[])
             case (CHIP_ID_JN5142_REV1C):    pcPartName = "JN5142J01";   break;
 
             case (CHIP_ID_JN5168):          pcPartName = "JN516x";      break;
-            
+            case (CHIP_ID_JN5169):          pcPartName = "JN5169";      break;
+
             default:                        pcPartName = "Unknown";     break;
         }
         

@@ -80,6 +80,8 @@ typedef struct
     uint32_t            u32FlashSize;
     
     uint32_t            u32BootloaderVersion;
+
+	uint32_t	            u32CustomerSettings;
     
     uint8_t             au8MacAddress[8];
 } tsChipDetails;
