@@ -51,7 +51,7 @@
 /****************************************************************************/
 
 #include <stdio.h>
-#ifndef __APPLE__
+#ifdef __linux__
 #include <endian.h>
 #endif
 #include <arpa/inet.h>
