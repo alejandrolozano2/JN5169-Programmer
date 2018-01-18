@@ -1492,7 +1492,7 @@ static teBL_Response eBL_ReadMessage(int iUartFd, int iTimeoutMicroseconds, teBL
 
 	if(u8CalculatedCheckSum != 0x00)
 	{
-//		DBG_vPrintf(TRACE_BOOTLOADER, "Checksum bad, got %02x expected %02x\n", u8CalculatedCheckSum, 0);
+		DBG_vPrintf(TRACE_BOOTLOADER, "Checksum bad, got %02x expected %02x\n", u8CalculatedCheckSum, 0);
 		return(E_BL_RESPONSE_CRC_ERROR);
 	}
 

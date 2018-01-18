@@ -68,6 +68,8 @@
 
 #ifdef __linux__
 #include <linux/types.h>
+#elif defined(__MACH__) && defined(__APPLE__)
+#include <IOKit/serial/ioss.h>
 #endif
 
 #include "uart.h"
@@ -195,7 +197,11 @@ teStatus UART_eClose(int iFileDescriptor)
 teStatus UART_eSetBaudRate(int iFileDescriptor, struct termios *psOptions, int iBaudRate)
 {
     int iBaud;
-    
+
+#if (defined(__MACH__) && defined(__APPLE__))
+    int bSetNonPOSIXBaudRate = 0;
+#endif
+
     DBG_vPrintf(TRACE_UART, "Changing baud rate to %d\n", iBaudRate);
 
     switch (iBaudRate)
@@ -231,10 +237,14 @@ teStatus UART_eSetBaudRate(int iFileDescriptor, struct termios *psOptions, int i
 #endif
 
     default:
+#if !(defined(__MACH__) && defined(__APPLE__))
         DBG_vPrintf(TRACE_UART, "Unsupported baud rate: %d\n", iBaudRate);
         return E_STATUS_BAD_PARAMETER;
+#else
+		bSetNonPOSIXBaudRate = 1;
+		iBaud = B38400;
+#endif        
     }       
-//TODO: use ioctl to set strange baudrates
 
     if(tcflush(iFileDescriptor, TCIOFLUSH) == -1)
     {
@@ -259,7 +269,25 @@ teStatus UART_eSetBaudRate(int iFileDescriptor, struct termios *psOptions, int i
         DBG_vPrintf(TRACE_UART, "Error changing port settings\n");
         return E_STATUS_ERROR;
     }
-    
+
+#if defined(__MACH__) && defined(__APPLE__)
+
+    if(bSetNonPOSIXBaudRate){
+        DBG_vPrintf(TRACE_UART, "Trying to set non-POSIX baud rate: %d\n", iBaudRate);
+	// The IOSSIOSPEED ioctl can be used to set arbitrary baud rates
+	// other than those specified by POSIX. The driver for the underlying serial hardware
+	// ultimately determines which baud rates can be used. This ioctl sets both the input
+	// and output speed.
+
+        speed_t speed = iBaudRate;
+        if (ioctl(iFileDescriptor, IOSSIOSPEED, &speed) == -1) {
+            DBG_vPrintf(TRACE_UART, "Error calling ioctl(..., IOSSIOSPEED, ...) %s(%d).\n", strerror(errno), errno);
+            return E_STATUS_BAD_PARAMETER;
+        }
+    }
+
+#endif
+
     return E_STATUS_OK;
 }
 
